@@ -65,7 +65,7 @@ _RoaringBitmap_ is a popular choice for this representation. While the bitmaps a
 in cases where the bitmaps are small because the number of deleted records is low, they can be embedded within the 
 commit logs to optimize the number of network round trips required to load all the files.
 
-#### Delta Lake and Iceberg
+#### Row level deletes in Delta Lake
 Currently, Delta Lake supports RoaringBitmaps for deletion vectors, while Iceberg supports simple table representations.
 The java libraries of Delta Lake and Iceberg provide APIs to read and write between these representations. Delta Lake 
 provides support for deletion vectors for `DELETE` operations since versions 2.4, while `UPDATE` and `MERGE` commands 
@@ -96,7 +96,7 @@ RemoveFile file_a.parquet file_a_dv_1.bin
 AddFile    file_a.parquet file_a_dv_2.bin
 ```
 
-When a compaction operation rewrites records into new files, and deletion vectors associated with data files that are
+When a compaction operation rewrites records into new files, the deletion vectors associated with data files that are
 removed are also marked as deleted. The commit log records the removal of the old file and deletion vector and 
 the addition of the new compacted file.
 
@@ -106,6 +106,37 @@ Type       Path           DV Path
 RemoveFile file_a.parquet file_a_dv_2.bin
 AddFile    file_d.parquet NULL
 ```
+
+#### Row level deletes in Iceberg
+Iceberg (v2), on the other hand, supports equality deletes and simple table representations for position based row level
+deletes. This proposal focuses on positional deletes. Similar to Delta Lake, Iceberg also maintains a separate file for
+recording ordinals of deleted records. The delete entries are typically stored in parquet files with `file_path` and 
+`pos` as mandatory columns. 
+
+Example:
+```
+file_path, pos
+/test_table/part-00000-3c1805f0c478-c000.parquet   36
+/test_table/part-00000-3c1805f0c478-c000.parquet   35
+/test_table/part-00000-446d734f04e8-c000.parquet    7
+/test_table/part-00000-446d734f04e8-c000.parquet    9
+```
+
+However, unlike Delta Lake, the Iceberg commit log does not embed the metadata of deletion 
+files withing the metadata of data files. Instead, it records addition of a deletion file as an independent event in
+a separate manifest file. The resulting manifest list file uses the same structure as that for data files, but with a 
+few more properties.
+
+Example:
+```
+    "added-position-delete-files": "1",
+    "added-delete-files": "1",
+    "added-position-deletes": "12",
+    "total-delete-files": "3",
+    "total-position-deletes": "27",
+    "total-equality-deletes": "0"
+```
+
 
 ## Implementation of the conversion of Deletion Vectors in XTable
 On a high level, the implementation of deletion vector conversion in XTable involves the following steps. XTable must 
@@ -119,22 +150,31 @@ of the deletion vectors is proportional to the number of records deleted, which 
 The proposed implementation aims to handle this efficiently by streaming the records from the sources to the targets.
 
 **New Class: `InternalDeletionVector`**
+
 To improve the functionality, a new class to manage the internal in-memory representation of deletion vectors is added.
-This is similar to creating internal representation for data files, schema, and partitioning spec.
+This is similar to creating internal representation for data files, schema, and partitioning spec. For XTable, adding
+a new deletion vector file is same as adding a new data file. Moreover, the deletion vector representation is an
+extension of the data file representation, with additional fields to capture the deletion vector metadata.
 
 The following metadata is relevant for deletion vectors:
-- `dataFilePath`: Path of the data file associated with the deletion vector.
 - `size`: Size of the deletion vector.
 - `countRecordsDeleted`: Number of records deleted.
 - `sourceDeletionVectorFilePath`: Path of the deletion vector file (optional as deletion vectors can be stored inline).
+> The fields above are inherited from InternalDataFile. The fields below are new fields specific to deletion vectors. 
+- `dataFilePath`: Path of the data file associated with the deletion vector.
 - `offset`: Offset of the deletion vector within the file (optional as inline deletion vectors do not have an offset).
 - `binaryRepresentation`: Binary representation of the inline deletion vector (optional).
 - `ordinalStream`: Stream of ordinals of the records deleted.
 
-**Modifications in `TableChange`**
-Currently XTable only captures the addition and removal of data files. To support deletion vectors, the `TableChange`
-class is updated to include the following fields a new field `deletionVectorsAdded` to capture deletion vectors added 
-in a commit. The sources will need to parse the commit logs to extract the deletion vectors and populate this field.
+**Modifications in `DataFilesDiff`**
+
+Currently, XTable only converts the addition and removal of data files. To support deletion vectors, XTable would need
+to detect new deletion vectors in the source table and add it to the conversion pipeline similar to data files. 
+Handling new deletion vectors does not require any changes in the `DataFilesDiff` class. The class encapsulates the
+addition and removal of data files, and the addition of deletion vectors is treated as a new data file addition.
+Which means, if a source produces deletion vectors, going forward, the `filesAdded` field in `DataFilesDiff` will
+not only contain data files but also deletion vectors. The consumers which cannot handle instance of 
+`InternalDeletionVector` in `filesAdded` can either ignore them or raise an exception.
 
 **Updates in `DeltaActionsConverter`**
 The converter class is responsible for converting Delta Lake `actions` into internal representations, resulting in
@@ -146,6 +186,28 @@ ordinals, which will be used to stream the ordinals of the records deleted to th
 **Changes in `DeltaConversionSource`**
 As described above, the delta commit logs adds data file entries in commit log each time delete vectors are updated. 
 This needs special handling in the delta source, to avoid duplication of data file actions.
+
+**New class `IcebergDeleteVectorConverter`**
+
+The purpose of this class is to convert internal deletion vectors to Iceberg positional delete files. The class will
+contain methods matching other Iceberg converters, for instance `toIceberg`. However, similar to unique handling of
+deletion vectors in `DeltaActionsConverter`, this class will have a unique implementation. This class will generate 
+data files for deletion vectors, which will be added to the target table. The cost of conversion of deletion vectors
+is proportional to the number of records deleted, and not the size of metadata or number of files. 
+
+Iceberg is quite
+flexible when it comes to location of data and metadata files. Since deletion vectors are data files, colocating them
+with metadata files could be confusing. Typically, deletion files are stored in partition specific directories, in
+the data directory of a table. However, it seems cleaner to keep all XTable generated data files in a separate
+directory, which will be configurable. The default location for deletion vectors will be `deletion-vectors` directory
+in the base directory of the table.
+
+**Modifications in `IcebergDataFileUpdatesSync` and `IcebergConversionTarget`**
+Finally, existing classes that handle Iceberg data files and sync operations will be updated to handle deletion vectors.
+Most changes are straightforward and inline with existing logic. However, as described earlier, new deletion vectors
+are added to a separate manifest file in Iceberg. This requires invoking a separate transaction operation specific 
+to row level operations. The row level operation is initiated only if there are new deletion vectors in the 
+`FilesaAdded`.
 
 ## Rollout/Adoption Plan
 
