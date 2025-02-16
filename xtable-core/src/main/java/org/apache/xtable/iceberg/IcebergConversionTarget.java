@@ -44,7 +44,7 @@ import org.apache.xtable.model.InternalTable;
 import org.apache.xtable.model.metadata.TableSyncMetadata;
 import org.apache.xtable.model.schema.InternalPartitionField;
 import org.apache.xtable.model.schema.InternalSchema;
-import org.apache.xtable.model.storage.DataFilesDiff;
+import org.apache.xtable.model.storage.InternalFilesDiff;
 import org.apache.xtable.model.storage.PartitionFileGroup;
 import org.apache.xtable.model.storage.TableFormat;
 import org.apache.xtable.spi.sync.ConversionTarget;
@@ -204,9 +204,9 @@ public class IcebergConversionTarget implements ConversionTarget {
   }
 
   @Override
-  public void syncFilesForDiff(DataFilesDiff dataFilesDiff) {
+  public void syncFilesForDiff(InternalFilesDiff internalFilesDiff) {
     dataFileUpdatesExtractor.applyDiff(
-        transaction, dataFilesDiff, transaction.table().schema(), transaction.table().spec());
+        transaction, internalFilesDiff, transaction.table().schema(), transaction.table().spec());
   }
 
   @Override

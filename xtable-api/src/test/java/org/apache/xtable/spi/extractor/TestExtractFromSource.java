@@ -41,8 +41,8 @@ import org.apache.xtable.model.InstantsForIncrementalSync;
 import org.apache.xtable.model.InternalSnapshot;
 import org.apache.xtable.model.InternalTable;
 import org.apache.xtable.model.TableChange;
-import org.apache.xtable.model.storage.DataFilesDiff;
 import org.apache.xtable.model.storage.InternalDataFile;
+import org.apache.xtable.model.storage.InternalFilesDiff;
 import org.apache.xtable.model.storage.PartitionFileGroup;
 
 public class TestExtractFromSource {
@@ -85,7 +85,7 @@ public class TestExtractFromSource {
         TableChange.builder()
             .tableAsOfChange(tableAtFirstInstant)
             .filesDiff(
-                DataFilesDiff.builder().fileAdded(newFile1).fileRemoved(initialFile2).build())
+                InternalFilesDiff.builder().fileAdded(newFile1).fileRemoved(initialFile2).build())
             .build();
     when(mockConversionSource.getTableChangeForCommit(firstCommitToSync))
         .thenReturn(tableChangeToReturnAtFirstInstant);
@@ -93,7 +93,7 @@ public class TestExtractFromSource {
         TableChange.builder()
             .tableAsOfChange(tableAtFirstInstant)
             .filesDiff(
-                DataFilesDiff.builder().fileAdded(newFile1).fileRemoved(initialFile2).build())
+                InternalFilesDiff.builder().fileAdded(newFile1).fileRemoved(initialFile2).build())
             .build();
 
     // add 2 new files, remove 2 files
@@ -106,7 +106,7 @@ public class TestExtractFromSource {
         TableChange.builder()
             .tableAsOfChange(tableAtSecondInstant)
             .filesDiff(
-                DataFilesDiff.builder()
+                InternalFilesDiff.builder()
                     .filesAdded(Arrays.asList(newFile2, newFile3))
                     .filesRemoved(Arrays.asList(initialFile3, newFile1))
                     .build())
@@ -117,7 +117,7 @@ public class TestExtractFromSource {
         TableChange.builder()
             .tableAsOfChange(tableAtSecondInstant)
             .filesDiff(
-                DataFilesDiff.builder()
+                InternalFilesDiff.builder()
                     .filesAdded(Arrays.asList(newFile2, newFile3))
                     .filesRemoved(Arrays.asList(initialFile3, newFile1))
                     .build())

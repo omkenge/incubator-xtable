@@ -391,7 +391,7 @@ public class TestDeltaSync {
     }
     Map<String, InternalDataFile> pathToFile =
         internalDataFiles.stream()
-            .collect(Collectors.toMap(InternalDataFile::getPhysicalPath, Function.identity()));
+            .collect(Collectors.toMap(InternalDataFile::physicalPath, Function.identity()));
     int count = 0;
     try (CloseableIterator<AddFile> fileItr = deltaScan.getFiles()) {
       for (CloseableIterator<AddFile> it = fileItr; it.hasNext(); ) {
@@ -400,7 +400,7 @@ public class TestDeltaSync {
             new org.apache.hadoop.fs.Path(basePath.resolve(addFile.getPath()).toUri()).toString();
         InternalDataFile expected = pathToFile.get(fullPath);
         assertNotNull(expected);
-        assertEquals(addFile.getSize(), expected.getFileSizeBytes());
+        assertEquals(addFile.getSize(), expected.fileSizeBytes());
         count++;
       }
     }
